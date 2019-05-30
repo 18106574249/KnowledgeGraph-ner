@@ -9,101 +9,26 @@ tag2label = {"O": 0,
              }
 
 
-def read_corpus(oridata_path):
+def read_corpus(data_path):
 
     input_data = []
-    with open(oridata_path, encoding='utf-8') as f:
+    with open(data_path, encoding='utf-8') as f:
         lines = f.readlines()
     sent, tag = [], []
     for line in lines:
         if line != '\n':
-            line = line.strip().split()
-            sent.append(line[0].strip())
-            tag.append(line[1].strip())
+            [word,label] = line.strip().split()
+            if word.isdigit():
+                word = '<NUM>'
+            elif ('\u0041' <= word <='\u005a') or ('\u0061' <= word <='\u007a'):
+                word = '<ENG>'
+            sent.append(word)
+            tag.append(label)
         else:
             input_data.append((sent, tag))
             sent, tag = [], []
 
     return input_data
-
-
-def vocab_build(vocab_path, corpus_path, min_count):
-    """
-    :param vocab_path:
-    :param corpus_path:
-    :param min_count:
-    :return:
-    """
-    data = read_corpus(corpus_path)
-    word2id = {}
-    for sent_, tag_ in data:
-        for word in sent_:
-            if word.isdigit():
-                word = '<NUM>'
-            elif ('\u0041' <= word <='\u005a') or ('\u0061' <= word <='\u007a'):
-                word = '<ENG>'
-            if word not in word2id:
-                word2id[word] = [len(word2id)+1, 1]
-            else:
-                word2id[word][1] += 1
-    low_freq_words = []
-    for word, [word_id, word_freq] in word2id.items():
-        if word_freq < min_count and word != '<NUM>' and word != '<ENG>':
-            low_freq_words.append(word)
-    for word in low_freq_words:
-        del word2id[word]
-
-    new_id = 1
-    for word in word2id.keys():
-        word2id[word] = new_id
-        new_id += 1
-    word2id['<UNK>'] = new_id
-    word2id['<PAD>'] = 0
-
-    print(len(word2id))
-    with open(vocab_path, 'wb') as fw:
-        pickle.dump(word2id, fw)
-
-
-def sentence2id(sent, word2id):
-    """
-    :param sent:
-    :param word2id:
-    :return:
-    """
-    sentence_id = []
-    for word in sent:
-        if word.isdigit():
-            word = '<NUM>'
-        elif ('\u0041' <= word <= '\u005a') or ('\u0061' <= word <= '\u007a'):
-            word = '<ENG>'
-        if word not in word2id:
-            word = '<UNK>'
-        sentence_id.append(word2id[word])
-    return sentence_id
-
-
-def read_dictionary(vocab_path):
-    """
-    :param vocab_path:
-    :return:
-    """
-    vocab_path = os.path.join(vocab_path)
-    with open(vocab_path, 'rb') as fr:
-        word2id = pickle.load(fr)
-    print('vocab_size:', len(word2id))
-    return word2id
-
-
-def load_embedding(vocab, embedding_dim):
-    """
-    :param vocab:
-    :param embedding_dim:
-    :return:
-    """
-    embedding_mat = np.random.uniform(-0.25, 0.25, (len(vocab), embedding_dim))
-    embedding_mat = np.float32(embedding_mat)
-    return embedding_mat
 
 
 def pad_sequences(sequences, pad_mark=0):
@@ -119,32 +44,32 @@ def pad_sequences(sequences, pad_mark=0):
         seq_ = seq[:max_len] + [pad_mark] * max(max_len - len(seq), 0)
         seq_list.append(seq_)
         seq_len_list.append(min(len(seq), max_len))
+    seq_list = np.array(seq_list)
     return seq_list, seq_len_list
 
-
-def batch_yield(data, batch_size, vocab, tag2label, shuffle=False):
+def batch_iter(data, label, batch_size, num_epochs):
     """
-    :param data:
-    :param batch_size:
-    :param vocab:
-    :param tag2label:
-    :param shuffle:
-    :return:
+    A mini-batch iterator to generate mini-batches for training neural network
+    :param data: a list of sentences. each sentence is a vector of integers
+    :param label: a list of labels
+    :param batch_size: the size of mini-batch
+    :param num_epochs: number of epochs
+    :return: a mini-batch iterator
     """
-    if shuffle:
-        random.shuffle(data)
 
-    seqs, labels = [], []
-    for (sent_, tag_) in data:
-        sent_ = sentence2id(sent_, vocab)
-        label_ = [tag2label[tag] for tag in tag_]
+    assert len(data) == len(label)
+    # data = np.array(data)
+    # data_size = data.shape[0]
+    data_size =len(data)
+    epoch_length = data_size // batch_size
+    if epoch_length==0:
+        epoch_length=1
+    for _ in range(num_epochs):
+        for batch_num in range(epoch_length):
+            start_index = batch_num * batch_size
+            end_index = start_index + batch_size
 
-        if len(seqs) == batch_size:
-            yield seqs, labels
-            seqs, labels = [], []
+            xdata = data[start_index: end_index]
+            ydata = label[start_index: end_index]
 
-        seqs.append(sent_)
-        labels.append(label_)
-
-    if len(seqs) != 0:
-        yield seqs, labels
+            yield xdata, ydata

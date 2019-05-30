@@ -1,90 +1,68 @@
 import torch
 import torch.nn as nn
-from torchcrf import CRF
+# from torchcrf import CRF
 from torchtext.vocab import Vectors
+from torch.autograd import Variable
+from torch.nn import functional as F
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
-
-from ...utils.log import logger
-from .config import DEVICE, DEFAULT_CONFIG
-from ...base.model import BaseConfig, BaseModel
+from crf import CRF
 
 
-class Config(BaseConfig):
-    def __init__(self, word_vocab, tag_vocab, vector_path, **kwargs):
-        super(Config, self).__init__()
-        for name, value in DEFAULT_CONFIG.items():
-            setattr(self, name, value)
-        self.word_vocab = word_vocab
-        self.tag_vocab = tag_vocab
-        self.tag_num = len(self.tag_vocab)
-        self.vocabulary_size = len(self.word_vocab)
-        self.vector_path = vector_path
-        for name, value in kwargs.items():
-            setattr(self, name, value)
+START_TAG = "<START>"
+STOP_TAG = "<STOP>"
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
 class Bilstm_crf(nn.Module):
-    def __init__(self, args):
-        super(Bilstm_crf, self).__init__(args)
-        self.args = args
-        self.embedding_size = args.embedding_size
-        self.hidden_dim = 300
-        self.tag_num = args.tag_num
-        self.batch_size = args.batch_size
-        self.bidirectional = True
-        self.num_layers = args.num_layers
-        self.pad_index = args.pad_index
-        self.dropout = args.dropout
-        self.save_path = args.save_path
+    def __init__(self, opt,tag2label):
+        super(Bilstm_crf, self).__init__()
 
-        vocabulary_size = args.vocabulary_size
-        embedding_dimension = args.embedding_dim
+        self.embedding_length = opt.embedding_length
+        self.hidden_size = opt.hidden_size
+        self.output_size = len(tag2label)
+        self.batch_size = opt.batch_size
 
-        self.embedding = nn.Embedding(vocabulary_size, embedding_dimension).to(DEVICE)
-        if args.static:
-            logger.info('logging word vectors from {}'.format(args.vector_path))
-            vectors = Vectors(args.vector_path).vectors
-            self.embedding = self.embedding.from_pretrained(vectors, freeze=not args.non_static).to(DEVICE)
+        self.vocab_size = opt.vocab_size
 
-        self.lstm = nn.LSTM(embedding_dimension, self.hidden_dim // 2, bidirectional=self.bidirectional,
-                            num_layers=self.num_layers, dropout=self.dropout).to(DEVICE)
-        self.hidden2label = nn.Linear(self.hidden_dim, self.tag_num).to(DEVICE)
-        self.crflayer = CRF(self.tag_num).to(DEVICE)
+        self.dropout = opt.dropout
 
-        # self.init_weight()
+        self.dropout_embed = nn.Dropout(opt.dropout)
+        self.word_embeddings = nn.Embedding(self.vocab_size, self.embedding_length)
+        self.word_embeddings.weight.data.copy_(torch.from_numpy(opt.embeddings))
+        self.dropout_embed = nn.Dropout(opt.dropout)
 
-    def init_weight(self):
-        nn.init.xavier_normal_(self.embedding.weight)
-        for name, param in self.lstm.named_parameters():
-            if 'weight' in name:
-                nn.init.xavier_normal_(param)
-        nn.init.xavier_normal_(self.hidden2label.weight)
+        self.lstm = nn.LSTM(self.embedding_length, self.hidden_size, bidirectional = True,dropout=opt.dropout)
 
-    def init_hidden(self, batch_size=None):
-        if batch_size is None:
-            batch_size = self.batch_size
+        if self.lstm.bidirectional:
+            self.label = nn.Linear(self.hidden_size * 2, self.output_size)
+        else:
+            self.label = nn.Linear(self.hidden_size, self.output_size)
+        self.crf = CRF(self.output_size)
 
-        h0 = torch.zeros(self.num_layers * 2, batch_size, self.hidden_dim // 2).to(DEVICE)
-        c0 = torch.zeros(self.num_layers * 2, batch_size, self.hidden_dim // 2).to(DEVICE)
 
-        return h0, c0
+    def loss(self, input_sentences, input_lengths,tags):
 
-    def loss(self, x, sent_lengths, y):
-        mask = torch.ne(x, self.pad_index)
-        emissions = self.lstm_forward(x, sent_lengths)
-        return self.crflayer(emissions, y, mask=mask)
+        feats = self._get_lstm_features(input_sentences,input_lengths)
 
-    def forward(self, x, sent_lengths):
-        mask = torch.ne(x, self.pad_index)
-        emissions = self.lstm_forward(x, sent_lengths)
-        return self.crflayer.decode(emissions, mask=mask)
+        return self.crf.loss(feats,tags)
 
-    def lstm_forward(self, sentence, sent_lengths):
-        x = self.embedding(sentence.to(DEVICE)).to(DEVICE)
-        x = pack_padded_sequence(x, sent_lengths)
-        self.hidden = self.init_hidden(batch_size=len(sent_lengths))
-        lstm_out, self.hidden = self.lstm(x, self.hidden)
-        lstm_out, new_batch_size = pad_packed_sequence(lstm_out)
-        assert torch.equal(sent_lengths, new_batch_size.to(DEVICE))
-        y = self.hidden2label(lstm_out.to(DEVICE))
-        return y.to(DEVICE)
+    def _get_lstm_features(self, input_sentences,input_length):
+        input_sentences = input_sentences.permute(1, 0)
+        input = self.word_embeddings(input_sentences)
+        input = input.permute(1, 0, 2)
+        # input[batch_size,max_len,embeding_size]
+        self.batch_size = input.shape[0]
+        h_0 = Variable(torch.zeros(2, self.batch_size, self.hidden_size))
+        c_0 = Variable(torch.zeros(2, self.batch_size, self.hidden_size))
+        input = nn.utils.rnn.pack_padded_sequence(input, input_length, batch_first=True, enforce_sorted=False)
+        output, (final_hidden_state, final_cell_state) = self.lstm(input, (h_0, c_0))
+        output, _ = torch.nn.utils.rnn.pad_packed_sequence(output, batch_first=True)
+        lstm_features = self.label(output)
+        return lstm_features
+
+    def forward(self, input_sentences, input_length,batch_size=None):
+        # lstm_features [batch_size,max_seq_len,output_size]
+        # tags [batch_size,max_seq_len]
+        lstm_features = self._get_lstm_features(input_sentences, input_length)
+        tags = self.crf(lstm_features)
+        return tags
