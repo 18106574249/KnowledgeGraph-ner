@@ -8,7 +8,7 @@ import torch.nn.functional as F
 import numpy as np
 import time
 import os
-from word_embedding import load_embeddings
+# from word_embedding import load_embeddings
 from bilstm_crf import Bilstm_crf
 from config import DefaultConfig
 START_TAG = "<START>"
@@ -25,41 +25,40 @@ def eval_model(model, x_valid,y_valid):
     for bat_num,valid_batch in enumerate(valid_data):
         text_lengths_val = [len(x) for x in valid_batch[0]]
         max_len_val=max(text_lengths_val)
-        pad_token_val= 0
-        padded_text_val = np.ones((len(valid_batch[0]), max_len_val)) * pad_token_val
-        for idx, t_len in enumerate(text_lengths_val):
-            padded_text_val[idx, 0:t_len] = valid_batch[0][idx][:t_len]
+        # pad_token_val= 0
+        # padded_text_val = np.ones((len(valid_batch[0]), max_len_val)) * pad_token_val
+        # for idx, t_len in enumerate(text_lengths_val):
+        #     padded_text_val[idx, 0:t_len] = valid_batch[0][idx][:t_len]
+        padded_text_val,text_lengths_val = data_process.pad_sequences(valid_batch[0])
+        padded_tags_val,tag_lengths_val = data_process.pad_sequences(valid_batch[1])
         padded_text_val = torch.from_numpy(padded_text_val).long()
-        target_val = torch.from_numpy(valid_batch[1]).long()
+        target_val = torch.from_numpy(padded_tags_val).long()
         target_val = torch.autograd.Variable(target_val).long()
         if torch.cuda.is_available():
             padded_text_val = padded_text_val.cuda()
             target_val = target_val.cuda()
         prediction_val = model(padded_text_val, text_lengths_val)
-        loss_val = model.loss(padded_text_val, target_val)
+        loss_val = model.loss(padded_text_val, text_lengths_val,target_val)
         """ evaluation :acc,precision,recall,f1"""
-        num_corrects_val = (torch.max(prediction_val, 1)[1].view(target_val.size()).data == target_val.data).float().sum()
-        pre_p = (torch.max(prediction_val, 1)[1].view(target_val.size()).data == torch.ones_like(target_val).data).float().sum()
-        actual_p = (target_val.data == torch.ones_like(target_val).data).float().sum()
-        true_p = torch.mul(torch.max(prediction_val, 1)[1].view(target_val.size()),target_val).float().sum()
-        acc_val = num_corrects_val / len(valid_batch[0])
-        precision_val = true_p/pre_p
-        recall_val = true_p/actual_p
-        f1_val = 2*precision_val*recall_val/(precision_val+recall_val)
-        out_val = F.softmax(prediction_val, 1)
+        num_corrects_val = (prediction_val.view(1, -1).data == target_val.view(1, -1).data).float().sum()
+
+        acc_val = num_corrects_val / prediction_val.view(1, -1).size()[1]
+        recall_val = data_process.get_score(prediction_val, target_val,'r')
+        pre_val = data_process.get_score(prediction_val, target_val,'p')
+        f1_val = data_process.get_score(prediction_val, target_val)
+        # out_val = F.softmax(prediction_val, 1)
         """ 样本数据属于正例概率 """
-        logit_val = torch.index_select(out_val.cpu(), 1, torch.LongTensor([1])).squeeze(1).data
+        # logit_val = torch.index_select(out_val.cpu(), 1, torch.LongTensor([1])).squeeze(1).data
         total_epoch_loss += loss_val.item()
+        total_epoch_recall += recall_val
         total_epoch_acc += acc_val.item()
-        total_epoch_pre += precision_val.item()
-        total_epoch_recall += recall_val.item()
-        total_epoch_f1 += f1_val.item()
+        total_epoch_pre += pre_val
+        total_epoch_f1 += f1_val
         print(f"validation in batch:{bat_num+1}\n")
-        print(torch.max(prediction_val, 1)[1].view(target_val.size()).data)
-        print(target_val.data)
+        # print(target_val.data)
 
     model.train()
-    return total_epoch_loss/(bat_num+1), total_epoch_acc/(bat_num+1), total_epoch_pre/(bat_num+1), total_epoch_recall/(bat_num+1), total_epoch_f1/(bat_num+1),logit_val
+    return total_epoch_loss/(bat_num+1), total_epoch_acc/(bat_num+1), total_epoch_f1/(bat_num+1),total_epoch_pre/(bat_num+1),total_epoch_recall/(bat_num+1)
 
 if __name__ == '__main__':
     opt = DefaultConfig()
@@ -145,36 +144,40 @@ if __name__ == '__main__':
         prediction = model(padded_text, text_lengths)
         loss = model.loss(padded_text, text_lengths, target)
         loss.backward()
-        num_corrects = (prediction.data == target.data).float().sum()
-        acc = num_corrects / len(batch[0])
+        # 所有tag预测对的个数
+        num_corrects = (prediction.view(1, -1).data == target.view(1, -1).data).float().sum()
+        acc = num_corrects / prediction.view(1,-1).size()[1]
+
         clip_gradient(model, 1e-1)
         optim.step()
         steps += 1
-        if steps % epoch_length == 0:
+        f1 = data_process.get_score(prediction, target)
+        if steps % 200 == 0:
             """每epoch,保存已经训练的模型"""
-            print(torch.max(prediction, 1)[1].view(target.size()).data)
             print(
-                f'epoch: {steps // epoch_length}, Idx: {idx + 1}, Training Loss: {loss.item():.4f}, Training Accuracy: {acc.item(): .2f}')
-            # test_loss, test_acc, test_precision, test_recall, test_f1, test_logit = eval_model(model, x_valid, y_valid)
-            # print(
-            #     f'Val. Loss: {test_loss:3f}, Val. Acc: {test_acc:.3f}, Val.pre: {test_precision:.3f}, Val.recall: {test_recall:.3f},Val.f1: {test_f1:.3f}')
-            # # define early stopping
-            # if best_loss is None:
-            #     best_loss = test_loss
-            # elif test_loss - best_loss > -min_delta:  # 降低的loss不够阈值
-            #     if wait >= opt.patience:
-            #         print(f'Earlystopping in epoch ：{steps // epoch_length}')
-            #         break
-            #     wait += 1
-            # else:
-            #     wait = 1
-            #     best_loss = test_loss
-            #     best_acc = test_acc
-            #     best_pre = test_precision
-            #     best_f1 = test_f1
-            #     print(f'best loss: {test_loss:.3f}, best acc: {test_acc:.3f}, best precision: {test_precision:.3f}')
-            #     save_path = os.path.join(outdir, str(steps)) + '.pkl'
-            #     save_dict = {"vocab_list": words, "state_dict": model.state_dict(), "optimizer": optim.state_dict(),
-            #                  "epoch": steps // epoch_length}
-            #     torch.save(save_dict, save_path)
-    print(f'best loss: {best_loss:.3f}, best acc: {best_acc:.3f}, best precision: {best_pre:.3f}')
+                f'epoch: {steps // epoch_length}, Idx: {idx + 1}, Training Loss: {loss.item():.4f}, Training Accuracy: {acc.item(): .4f}, Training F1:{f1:.4f}')
+            test_loss, test_acc,test_f1,test_pre,test_recall = eval_model(model, x_valid, y_valid)
+            print(
+                f'Val. Loss: {test_loss:.4f}, Val. Acc: {test_acc:.4f},Val.f1: {test_f1:.4f}，Val.pre:{test_pre:.4f},Val.recall:{test_recall:.4f}')
+            # define early stopping
+            if best_loss is None:
+                best_loss = test_loss
+            elif test_loss - best_loss > -min_delta:  # 降低的loss不够阈值
+                if wait >= opt.patience:
+                    print(f'Earlystopping in epoch ：{steps // epoch_length}')
+                    break
+                wait += 1
+            else:
+                wait = 1
+                best_loss = test_loss
+                best_acc = test_acc
+                best_pre = test_pre
+                best_f1 = test_f1
+                best_recall =test_recall
+                print(f'best loss: {test_loss:.3f}, best acc: {test_acc:.3f}')
+                save_path = os.path.join(outdir, str(steps)) + '.pkl'
+                save_dict = {"vocab_list": words, "state_dict": model.state_dict(), "optimizer": optim.state_dict(),
+                             "epoch": steps // epoch_length}
+                torch.save(save_dict, save_path)
+
+    print(f'best loss: {best_loss:.3f}, best acc: {best_acc:.3f}, best precision: {best_pre:.3f},best_recall:{best_recall:.3f}')

@@ -1,14 +1,14 @@
 import sys, pickle, os, random
 import numpy as np
-
-
+from sklearn.metrics import f1_score, accuracy_score, recall_score, precision_score
+import torch
 tag2label = {"O": 0,
              "B-PER": 1, "I-PER": 2,
              "B-LOC": 3, "I-LOC": 4,
              "B-ORG": 5, "I-ORG": 6
              }
 
-
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 def read_corpus(data_path):
 
     input_data = []
@@ -73,3 +73,18 @@ def batch_iter(data, label, batch_size, num_epochs):
             ydata = label[start_index: end_index]
 
             yield xdata, ydata
+
+
+def get_score(prediction, target, score_type='f1'):
+    metrics_map = {
+        'f1': f1_score,
+        'p': precision_score,
+        'r': recall_score,
+        'acc': accuracy_score
+    }
+    metric_func = metrics_map[score_type] if score_type in metrics_map else metrics_map['f1']
+
+    predict_y = prediction.view(1,-1).data.tolist()[0]
+    true_y = target.view(1,-1).data.tolist()[0]
+    assert len(true_y) == len(predict_y)
+    return metric_func(predict_y, true_y, average='micro')

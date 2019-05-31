@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 # from torchcrf import CRF
-from torchtext.vocab import Vectors
+
 from torch.autograd import Variable
 from torch.nn import functional as F
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
