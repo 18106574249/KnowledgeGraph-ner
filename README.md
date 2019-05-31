@@ -62,5 +62,5 @@ Github地址：https://github.com/feifeife/KnowledgeGraph-ner
 
 | Precision     | Recall     | F1     | 
 | :---: | :---: | :---: |
-| 0.90 | 0.8752 | 0.8847 |
+| 0.9122 | 0.9035 | 0.9126 |
 
