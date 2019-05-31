@@ -3,8 +3,10 @@ Named entity recognition in pytorch
 
 Github地址：https://github.com/feifeife/KnowledgeGraph-ner
 
+checkpoints文件过大，暂不上传
+
 本项目使用
-* python3.7
+* python 3.7
 * pytorch 1.1.0
 实现了命名实体识别的Bilstm+crf layer的模型
 
