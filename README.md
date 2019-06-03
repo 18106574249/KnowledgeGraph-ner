@@ -51,6 +51,13 @@ checkpoints文件过大，暂不上传
 * 词向量
 
 使用预训练好的中文词向量，训练预料为Wikipedia，位于/data/facebook_wiki
+
+词向量同时上传于网盘，链接为：
+
+链接：https://pan.baidu.com/s/1a9m5JObJ8wAIan8asmpKlw 
+提取码：ikoz 
+
+
 ## 模型
 实现了经典的bilstm+crf模型
 
