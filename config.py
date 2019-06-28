@@ -1,6 +1,8 @@
 class DefaultConfig(object):
     data_path='./data/train_data.txt'
-    emb_path='./data/facebook_wiki/zh.300'
+    emb_path = '/mnt/data/anyifei/chat-clf/data/facebook_wiki/zh.300'
+    vocab_path = '/mnt/data/anyifei/chat-clf/data/vocab.txt'
+
 
     lr = 2e-5
     batch_size = 64

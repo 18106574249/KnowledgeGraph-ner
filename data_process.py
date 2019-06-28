@@ -3,21 +3,50 @@ import numpy as np
 from sklearn.metrics import f1_score, accuracy_score, recall_score, precision_score
 import torch
 tag2label = {"O": 0,
-             "B-PER": 1, "I-PER": 2,
-             "B-LOC": 3, "I-LOC": 4,
-             "B-ORG": 5, "I-ORG": 6
+             "B-W": 1, "I-W": 2,
              }
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-def read_corpus(data_path):
 
+
+def tokens_to_ids(tokens,vocab):
+    ids = []
+    for word in tokens:
+        word = str(word)
+        if ('\u0041' <= word <= '\u005a') or ('\u0061' <= word <= '\u007a'):
+            word = '[ENG]'
+        elif word not in vocab:
+            word = '[UNK]'
+        ids.append(vocab[word])
+    return ids
+
+
+def load_vocab(vocab_file):
+    """Loads a vocabulary file into a dictionary."""
+    vocab = collections.OrderedDict()
+    index = 0
+    with open(vocab_file, "r", encoding="utf-8") as reader:
+        while True:
+            token = reader.readline()
+            if not token:
+                break
+            token = token.strip()
+            vocab[token] = index
+            index += 1
+    for token in ['[ENG]','[NUM]']:
+        vocab[token] = index
+        index += 1
+    return vocab
+
+
+def read_corpus(data_path):
     input_data = []
     with open(data_path, encoding='utf-8') as f:
         lines = f.readlines()
     sent, tag = [], []
     for line in lines:
         if line != '\n':
-            [word,label] = line.strip().split()
+            [word, label] = line.strip().split()
             if word.isdigit():
                 word = '<NUM>'
             elif ('\u0041' <= word <='\u005a') or ('\u0061' <= word <='\u007a'):
@@ -47,6 +76,7 @@ def pad_sequences(sequences, pad_mark=0):
     seq_list = np.array(seq_list)
     return seq_list, seq_len_list
 
+
 def batch_iter(data, label, batch_size, num_epochs):
     """
     A mini-batch iterator to generate mini-batches for training neural network
@@ -73,7 +103,6 @@ def batch_iter(data, label, batch_size, num_epochs):
             ydata = label[start_index: end_index]
 
             yield xdata, ydata
-
 
 def get_score(prediction, target, score_type='f1'):
     metrics_map = {

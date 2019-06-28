@@ -14,10 +14,12 @@ from config import DefaultConfig
 START_TAG = "<START>"
 STOP_TAG = "<STOP>"
 
+
 def clip_gradient(model, clip_value):
     params = list(filter(lambda p: p.grad is not None, model.parameters()))
     for p in params:
         p.grad.data.clamp_(-clip_value, clip_value)
+
 def eval_model(model, x_valid,y_valid):
     valid_data = data_process.batch_iter(x_valid, y_valid, opt.batch_size, num_epochs=1)
     total_epoch_loss, total_epoch_acc, total_epoch_pre, total_epoch_recall, total_epoch_f1 = 0, 0, 0, 0, 0
@@ -25,10 +27,6 @@ def eval_model(model, x_valid,y_valid):
     for bat_num,valid_batch in enumerate(valid_data):
         text_lengths_val = [len(x) for x in valid_batch[0]]
         max_len_val=max(text_lengths_val)
-        # pad_token_val= 0
-        # padded_text_val = np.ones((len(valid_batch[0]), max_len_val)) * pad_token_val
-        # for idx, t_len in enumerate(text_lengths_val):
-        #     padded_text_val[idx, 0:t_len] = valid_batch[0][idx][:t_len]
         padded_text_val,text_lengths_val = data_process.pad_sequences(valid_batch[0])
         padded_tags_val,tag_lengths_val = data_process.pad_sequences(valid_batch[1])
         padded_text_val = torch.from_numpy(padded_text_val).long()
@@ -48,14 +46,13 @@ def eval_model(model, x_valid,y_valid):
         f1_val = data_process.get_score(prediction_val, target_val)
         # out_val = F.softmax(prediction_val, 1)
         """ 样本数据属于正例概率 """
-        # logit_val = torch.index_select(out_val.cpu(), 1, torch.LongTensor([1])).squeeze(1).data
+
         total_epoch_loss += loss_val.item()
         total_epoch_recall += recall_val
         total_epoch_acc += acc_val.item()
         total_epoch_pre += pre_val
         total_epoch_f1 += f1_val
         print(f"validation in batch:{bat_num+1}\n")
-        # print(target_val.data)
 
     model.train()
     return total_epoch_loss/(bat_num+1), total_epoch_acc/(bat_num+1), total_epoch_f1/(bat_num+1),total_epoch_pre/(bat_num+1),total_epoch_recall/(bat_num+1)
@@ -69,42 +66,25 @@ if __name__ == '__main__':
     outdir = os.path.abspath(os.path.join(os.path.curdir, "checkpoints", timestamp))
     if not os.path.exists(outdir):
         os.makedirs(outdir)
-
-    # print("load embedding dict\n")
-    # emb_path = opt.emb_path
-    # words, embeddings = load_embeddings(emb_path)
+    vocab = data_process.load_vocab(opt.vocab_path)
 
 
 
-    # print("embedding augment")
-    # for sent,tag in data:
-    #     for word in sent:
-    #         if not word in words:
-    #             words.append(word)
-    #             embeddings.append([0 for _ in embeddings[0]])
-    # words.insert(0, "<pad>")
-    # embeddings.insert(0, [0 for _ in embeddings[0]])
-    # embeddings = np.array(embeddings)
-
-    # np.save('emb.npy',embeddings)
-    embeddings = np.load('emb.npy')
-    # np.save('words.npy', np.array(words))
-    words = np.load('words.npy')
-    words_dict = dict(zip(words,range(len(words))))
     tag2label = {"O": 0,
-                 "B-PER": 1, "I-PER": 2,
-                 "B-LOC": 3, "I-LOC": 4,
-                 "B-ORG": 5, "I-ORG": 6
+                 "B-W": 1, "I-W": 2,
                  }
     tag2label[START_TAG] = len(tag2label)
     tag2label[STOP_TAG] = len(tag2label)
     print("映射word and tag to id")
-    sentence = [[words_dict[word] for word in x[0]]for x in data]
+    sentence = []
+    for idx, data in enumerate(data):
+        sent = list(data[0])
+        sent = tokens_to_ids(sent,vocab)
+        sentence.append(sent)
     tags = [[tag2label[tag] for tag in x[1]]for x in data]
 
     opt.parse({'vocab_size':len(words),
-               'embedding_length':embeddings.shape[1],
-               'embeddings':embeddings})
+               'embedding_length': 300})
 
     model = Bilstm_crf(opt, tag2label)
     optim = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()))
@@ -131,7 +111,6 @@ if __name__ == '__main__':
         padded_text,text_lengths = data_process.pad_sequences(text)
         padded_tags,tag_lengths = data_process.pad_sequences(batch[1])
         padded_text = torch.from_numpy(padded_text).long()
-        # 将label转成variable variable是吸纳了自动求导
 
         target = torch.from_numpy(padded_tags).long()
         target = torch.autograd.Variable(target).long()
@@ -140,7 +119,6 @@ if __name__ == '__main__':
             target = target.cuda()
         # 每个batch都将梯度归零，不累计
         optim.zero_grad()
-
         prediction = model(padded_text, text_lengths)
         loss = model.loss(padded_text, text_lengths, target)
         loss.backward()
@@ -154,11 +132,9 @@ if __name__ == '__main__':
         f1 = data_process.get_score(prediction, target)
         if steps % 200 == 0:
             """每epoch,保存已经训练的模型"""
-            print(
-                f'epoch: {steps // epoch_length}, Idx: {idx + 1}, Training Loss: {loss.item():.4f}, Training Accuracy: {acc.item(): .4f}, Training F1:{f1:.4f}')
+            print(f'epoch: {steps // epoch_length}, Idx: {idx + 1}, Training Loss: {loss.item():.4f}, Training Accuracy: {acc.item(): .4f}, Training F1:{f1:.4f}')
             test_loss, test_acc,test_f1,test_pre,test_recall = eval_model(model, x_valid, y_valid)
-            print(
-                f'Val. Loss: {test_loss:.4f}, Val. Acc: {test_acc:.4f},Val.f1: {test_f1:.4f}，Val.pre:{test_pre:.4f},Val.recall:{test_recall:.4f}')
+            print(f'Val. Loss: {test_loss:.4f}, Val. Acc: {test_acc:.4f},Val.f1: {test_f1:.4f}，Val.pre:{test_pre:.4f},Val.recall:{test_recall:.4f}')
             # define early stopping
             if best_loss is None:
                 best_loss = test_loss
